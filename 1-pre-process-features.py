@@ -1,11 +1,16 @@
 import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.preprocessing import StandardScaler
+import traceback
+import numpy as np
 
-
-class FeaturesHandler: 
+class CategoricalFeaturesEncoder: 
+    """
+    Class to categorise and encode categorical features
+    """
 
     X_train = None
+    data_type = None
     binary_features = []
     ordinal_features = []
     low_card_nominal = []
@@ -16,7 +21,7 @@ class FeaturesHandler:
 
     ordinal_mappings = {
         # Alley access
-        'Alley': {'NA': 0, 'Grvl': 1, 'Pave': 2},
+        'Alley': {np.nan: 0 , 'NA': 0, 'Grvl': 1, 'Pave': 2},
         
         # Lot shape
         'LotShape': {'IR3': 0, 'IR2': 1, 'IR1': 2, 'Reg': 3},
@@ -54,20 +59,40 @@ class FeaturesHandler:
         # Fence quality
         'Fence': {'NA': 0, 'MnWw': 1, 'GdWo': 2, 'MnPrv': 3, 'GdPrv': 4}
     }
+   
+    def handle_categories(self, X,  data_type):
+        try:
+            self.X_train = X
+            self.data_type = data_type
+            if(data_type == 'train'):
+                print(f"Features categorisation started")
+                self.categorise_features()
+            print(f"Binary features processing started")
+            self.process_binary_features()
+            print(f"Ordinal features processing started")
+            self.process_ordinal_features()
+            print(f"Low cardinality nominal features processing started")
+            self.process_low_card_nominal()
+            print(f"Tbd features processing started")
+            self.process_tbd_features()
+            return self.X_train
+        except Exception as e:
+            print(f"Error occured during encoding features: {e}")
+            traceback.print_exc()
 
 
+    def prepare_encoder_on_train_data(self):
+        """
+        Prepares and fits a OneHotEncoder on the training data.
+        
+        The encoder is OLNY fitted on the training data. It is then used to transform both the training and test data. 
 
-    def __init__(self, X_train: pd.DataFrame):
-        self.X_train = X_train
-    
-    def handle_categories(self):
-        self.categorise_features()
-        self.process_binary_features()
-        self.process_ordinal_features()
-        self.process_low_card_nominal()
-        self.process_tbd_features()
-        return self.X_train
-
+        Returns:
+            None
+        """
+        self.encoder = OneHotEncoder(sparse_output=False, drop='first', handle_unknown='ignore')
+        self.encoder.fit(self.X_train[self.low_card_nominal])
+        
     def process_binary_features(self):
         """
         Modify binary descriptive features to be 0 or 1 
@@ -81,7 +106,7 @@ class FeaturesHandler:
     
     # Ensure any unexpected values (if they appear) are handled
         if self.X_train[feature].isna().any():
-            print(f"Warning: Unexpected values in {feature} - filling with mode")
+            # print(f"Warning: Unexpected values in {feature} - filling with mode")
             self.X_train[feature] = self.X_train[feature].fillna(self.X_train[feature].mode()[0])
 
         # for feature in self.binary_features:
@@ -94,24 +119,32 @@ class FeaturesHandler:
         # for each entry in ordinal_features, apply the mapping
         for feature in self.ordinal_features:
             self.X_train[feature] = self.X_train[feature].map(self.ordinal_mappings[feature])
+            # print(f"{feature} after encoding: {self.X_train[feature].value_counts().to_dict()}")
+            print(f"DEBUG: current feature: {feature}")
+            # Ensure any unexpected values (if they appear) are handled
             if self.X_train[feature].isna().any():
-                print(f"Warning: Unexpected values in {feature} - filling with mode")
+                # print(f"Warning: Unexpected values in {feature} - filling with mode")
                 self.X_train[feature] = self.X_train[feature].fillna(self.X_train[feature].mode()[0])
             # print(f"{feature} after encoding: {X_train[feature].value_counts().to_dict()}")
         
-    def process_low_card_nominal(self):
-        # Handle missing values first
+    def handle_missing_on_low_card_nominal(self):
+         # Handle missing values first
         for feature in self.low_card_nominal:
             self.X_train[feature] = self.X_train[feature].fillna('NA')
-        
-        # Create and fit the encoder
-        encoder = OneHotEncoder(sparse_output=False, drop='first', handle_unknown='ignore')
-        encoder.fit(self.X_train[self.low_card_nominal])
-        
+    
+    def process_low_card_nominal(self):
+       
+        self.handle_missing_on_low_card_nominal()
+        if(self.data_type == 'train'): 
+            self.prepare_encoder_on_train_data()
+
         # Transform the data
-        encoded_features = encoder.transform(self.X_train[self.low_card_nominal])
-        encoded_column_names = encoder.get_feature_names_out(self.low_card_nominal)
-        
+        try:
+            encoded_features = self.encoder.transform(self.X_train[self.low_card_nominal])
+            encoded_column_names = self.encoder.get_feature_names_out(self.low_card_nominal)
+        except ValueError:
+            print("Error: Unexpected values in low cardinality nominal features")
+
         # Create a dataframe with the encoded features
         encoded_df = pd.DataFrame(
             encoded_features,
@@ -128,6 +161,8 @@ class FeaturesHandler:
     def process_tbd_features(self):
         y_train = pd.read_csv('data/train.csv')['SalePrice']
         for feature in self.tbd_features:
+            # for NA values, replace with most common category
+            self.X_train[feature] = self.X_train[feature].fillna(self.X_train[feature].mode()[0])
             # Calculate mean target value for each category
             target_means = self.X_train.join(y_train).groupby(feature)[y_train.name].mean()
         
@@ -169,71 +204,93 @@ class FeaturesHandler:
             elif info['unique_values'] > 25:
                 self.high_card_features.append(col)
 
-        # print (f"\nBinary features: {self.binary_features}\n")
-        # print (f"Ordinal features: {self.ordinal_features}\n")
-        # print (f"Low cardinality nominal features: {self.low_card_nominal}\n")
-        # print (f"High cardinality features: {self.high_card_features}\n")
+        print (f"\nBinary features: {self.binary_features}\n")
+        print (f"Ordinal features: {self.ordinal_features}\n")
+        print (f"Low cardinality nominal features: {self.low_card_nominal}\n")
+        print (f"High cardinality features: {self.high_card_features}\n")
         print (f"Features to be determined: {self.tbd_features}\n")
 
 class FeaturesScaler: 
-    def __init__(self, X_train: pd.DataFrame):
-        self.X_train = X_train
-    
-    def scale_features(self):
+
+    def scale_features(self, X_train):
         scaler = StandardScaler()
-        id_train = self.X_train['Id'].copy()
-        X_train_no_id = self.X_train.drop('Id', axis=1)
+        id_train = X_train['Id'].copy()
+        X_train_no_id = X_train.drop('Id', axis=1)
         X_train_scaled_array = scaler.fit_transform(X_train_no_id)
         X_train_scaled = pd.DataFrame(X_train_scaled_array, columns=X_train_no_id.columns)
         X_train_scaled['Id'] = id_train.values
         return X_train_scaled  
           
-def pre_process_numerical_features(X_train):
+
+class FeaturesProcessor: 
+
+
+    def __init__(self):
+        self.handler = CategoricalFeaturesEncoder()
+        self.scaler = FeaturesScaler()
+    
+    def process_features(self, X, data_type):
+        
+        try: 
+        #Fix column to be treated as int
+            X["LotFrontage"] = pd.to_numeric(X["LotFrontage"], errors='coerce')
+            X["MasVnrArea"] = pd.to_numeric(X["LotFrontage"], errors='coerce')
+            X["GarageYrBlt"] = pd.to_numeric(X["LotFrontage"], errors='coerce')
+            
+            # Handle features
+            X = self.handler.handle_categories(X, data_type)
+
+            # Scale features
+            X = self.scaler.scale_features(X)
+
+            return X
+        except Exception as e:
+            raise Exception(f"Error occured during processing features: {e}")     
+
+def pre_process_numerical_features(X):
     # find int floal columns
-    int_cols = X_train.select_dtypes(include=['int64', 'float64']).columns
-    print(f"Int cols: {int_cols}")
+    int_cols = X.select_dtypes(include=['number']).columns
+    # print(f"Int cols: {int_cols}")
     # find columns with missing values
-    missing_cols = int_cols[X_train[int_cols].isnull().any()]
-    print(f"Missing cols: {missing_cols}")
+    missing_cols = int_cols[X[int_cols].isnull().any()]
+    # print(f"Missing cols: {missing_cols}")
     # fill missing values with mean
-    X_train[missing_cols] = X_train[missing_cols].fillna(X_train[missing_cols].mean())
-    return X_train
+    X[missing_cols] = X[missing_cols].fillna(X[missing_cols].mean())
+    return X
 
-
-def pre_process_dataset(X_train):
-    #Fix column to be treated as int
-    X_train["LotFrontage"] = pd.to_numeric(X_train["LotFrontage"], errors='coerce')
-    X_train["MasVnrArea"] = pd.to_numeric(X_train["LotFrontage"], errors='coerce')
-    X_train["GarageYrBlt"] = pd.to_numeric(X_train["LotFrontage"], errors='coerce')
-
-    # Handle features 
-    handler = FeaturesHandler(X_train)
-    X_train = handler.handle_categories()
-    print(f"output dataframe:\n {X_train.head()}")
-
-    # Scale features 
-    scaler = FeaturesScaler(X_train)
-    X_train = scaler.scale_features()
-    print(f"output dataframe after scaling:\n {X_train.head()}")
-    return X_train
+def pre_process_categorical_features(X):
+    text_cols = X.select_dtypes(exclude=['number']).columns
+    for col in text_cols:
+        X[col] = X[col].fillna('NA')
+    return X
+    
 
 
 
 def main():
-    # train = pd.read_csv('data/train.csv') 
 
-    # X_train = train.drop(columns=['SalePrice'])
-    # X_train = pre_process_dataset(X_train)
-    # X_train.to_csv('data/X_train_cleaned.csv', index=False)
+    featuresProcessor = FeaturesProcessor()
+
+    train = pd.read_csv('data/train.csv',keep_default_na=True) 
+    train_trimed = train.drop(columns=['SalePrice'])
+    X_train = pre_process_numerical_features(train_trimed)
+    X_train = pre_process_categorical_features(X_train)   
+
+    X_train = featuresProcessor.process_features(X_train, 'train')
+    X_train.to_csv('data/X_train_cleaned.csv', index=False)
+    print(f"Processing train data completed, starting to work on test set...")
 
     # first clean numerical data and save it
-    test_set = pd.read_csv('data/test.csv',keep_default_na=True)
-    X_test_cleaned_numerical = pre_process_numerical_features(test_set)
-    X_test_cleaned_numerical.to_csv('data/X_test_cleaned_numerical.csv', index=False)
+    try:
+        test_set = pd.read_csv('data/test.csv',keep_default_na=True)
+        X_test = pre_process_numerical_features(test_set)
+        X_test = pre_process_categorical_features(X_train)
 
-    test_set = pd.read_csv('data/X_test_cleaned_numerical.csv',keep_default_na=False)
-    X_test = pre_process_dataset(test_set)
-    X_test.to_csv('data/X_test_cleaned.csv', index=False)
+        X_test = featuresProcessor.process_features(test_set, 'test')
+        X_test.to_csv('data/X_test_cleaned.csv', index=False)
+        print (f"Test set processing completed")
+    except Exception as e:
+        print(f"Error occured during processing test data: {e}")
 
 if __name__ == "__main__":
     main()
