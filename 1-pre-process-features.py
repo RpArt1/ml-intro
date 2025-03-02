@@ -159,6 +159,8 @@ class CategoricalFeaturesEncoder:
     def process_high_card_features(self):
         pass
     def process_tbd_features(self):
+        print(f"Processing tbd features")
+        print(f"tbds: {self.tbd_features}")
         y_train = pd.read_csv('data/train.csv')['SalePrice']
         for feature in self.tbd_features:
             # for NA values, replace with most common category
@@ -236,7 +238,7 @@ class FeaturesProcessor:
             X["LotFrontage"] = pd.to_numeric(X["LotFrontage"], errors='coerce')
             X["MasVnrArea"] = pd.to_numeric(X["LotFrontage"], errors='coerce')
             X["GarageYrBlt"] = pd.to_numeric(X["LotFrontage"], errors='coerce')
-            
+            X['MSSubClass'] = X['MSSubClass'].astype(str)
             # Handle features
             X = self.handler.handle_categories(X, data_type)
 
